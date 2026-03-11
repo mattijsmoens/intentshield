@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+*.egg
+.eggs/
+_test_data/
+_demo_data/
+*.lock
+daily_usage.txt
+.core_safety_lock
+.conscience_lock
