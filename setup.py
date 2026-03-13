@@ -5,7 +5,7 @@ with open("README.md", encoding="utf-8") as f:
 
 setup(
     name="intentshield",
-    version="1.1.0",
+    version="1.1.1",
     author="Mattijs Moens",
     description="Pre-execution intent verification for AI agents",
     long_description=long_description,

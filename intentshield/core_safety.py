@@ -29,6 +29,9 @@ class FrozenNamespace(type):
             return
         raise TypeError(f"CORE SAFETY VIOLATION: Cannot modify immutable law '{key}'")
 
+    def __delattr__(cls, key):
+        raise TypeError(f"CORE SAFETY VIOLATION: Cannot delete immutable law '{key}'")
+
 
 class CoreSafety(metaclass=FrozenNamespace):
     """
@@ -50,9 +53,9 @@ class CoreSafety(metaclass=FrozenNamespace):
     ALLOW_FILE_DELETION = False
     ALLOW_NETWORK_SCANNING = False
 
-    RESTRICTED_DOMAINS = [
+    RESTRICTED_DOMAINS = (
         "darkweb", ".onion", "porn", "hacking", "exploit", "malware"
-    ]
+    )
 
     # === MUTABLE STATE (via dict to bypass FrozenNamespace) ===
     _SELF_HASH = None
@@ -154,11 +157,11 @@ class CoreSafety(metaclass=FrozenNamespace):
         
         if not os.path.exists(lockfile_path):
             cls._SELF_HASH = cls.get_self_hash()
-            with open(lockfile_path, "w") as f:
+            with open(lockfile_path, "w", encoding="utf-8") as f:
                 f.write(cls._SELF_HASH)
             logger.info(f"CORE SAFETY SEALED. Hash: {cls._SELF_HASH[:16]}...")
         else:
-            with open(lockfile_path, "r") as f:
+            with open(lockfile_path, "r", encoding="utf-8") as f:
                 cls._SELF_HASH = f.read().strip()
             logger.info(f"CORE SAFETY RESTORED. Hash: {cls._SELF_HASH[:16]}...")
 
@@ -203,7 +206,11 @@ class CoreSafety(metaclass=FrozenNamespace):
                     with open(reset_file, "r", encoding="utf-8") as f:
                         content = f.read().strip().split("|")
                         if len(content) == 2 and content[0] == current_date:
-                            usage = int(content[1])
+                            try:
+                                usage = int(content[1])
+                            except ValueError:
+                                logger.warning(f"Corrupted usage file, resetting count.")
+                                usage = 0
 
                 if usage >= max_per_day:
                     return False, f"Daily limit reached ({usage}/{max_per_day})."
@@ -243,8 +250,12 @@ class CoreSafety(metaclass=FrozenNamespace):
             if not ok:
                 return False, reason
 
-        # KILLSWITCH
-        if os.path.exists("KILLSWITCH"):
+        # KILLSWITCH (absolute paths for security)
+        _killswitch_paths = [
+            os.path.join(os.path.dirname(__file__), "..", "data", "KILLSWITCH"),
+            os.path.join(os.path.dirname(__file__), "..", "KILLSWITCH"),
+        ]
+        if any(os.path.exists(ks) for ks in _killswitch_paths):
             logger.critical("KILLSWITCH DETECTED. TERMINATING.")
             os._exit(1)
 
@@ -278,19 +289,20 @@ class CoreSafety(metaclass=FrozenNamespace):
         # DOMAIN RESTRICTIONS
         if action_type == "BROWSE":
             url = str(payload).lower()
-            if url.startswith("file:") or "localhost" in url or "127.0.0.1" in url:
+            if url.startswith("file:") or "localhost" in url or "127.0.0.1" in url or "::1" in url:
                 return False, "Local file/network access is forbidden."
             blocked_domains = list(cls.RESTRICTED_DOMAINS) + cls._STATE.get("extra_restricted_domains", [])
             if any(bad in url for bad in blocked_domains):
                 return False, f"Domain blacklisted: {url}"
-            if any(k in url for k in ["key=", "token=", "password=", "secret="]):
+            if any(k in url for k in ["key=", "token=", "password=", "secret=", "auth="]):
                 return False, "URL contains sensitive credential keywords."
 
         # SELF-MODIFICATION BAN
         if action_type == "WRITE_FILE":
-            target = os.path.abspath(payload).lower()
-            myself = os.path.abspath(__file__).lower()
-            if myself in target:
+            target = os.path.normpath(os.path.abspath(payload)).lower()
+            myself = os.path.normpath(os.path.abspath(__file__)).lower()
+            my_dir = os.path.dirname(myself)
+            if target == myself or target.startswith(my_dir + os.sep):
                 return False, "Cannot modify safety module."
             
             # Protected files check
@@ -308,11 +320,14 @@ class CoreSafety(metaclass=FrozenNamespace):
             target = str(payload).lower()
             if "\0" in target:
                 return False, "Null byte injection detected."
-            if target.endswith(".py") or ".env" in target or "config" in target:
+            target_basename = os.path.basename(target)
+            if (target.endswith(".py")
+                    or target_basename.startswith(".env")
+                    or target_basename in ("config", "config.json", "config.yaml", "config.yml", "config.ini", "config.toml")):
                 return False, "Cannot read source code or configuration files."
 
         # CODE EXFILTRATION DETECTION
-        if action_type in ["ANSWER", "REPLY", "SAY", "THINK"]:
+        if action_type in ["ANSWER", "REPLY", "SAY", "THINK", "WRITE_FILE"]:
             payload_lower = str(payload).lower()
             code_signals = [
                 "class coresafety", "class conscience", "def audit_action",
@@ -327,14 +342,15 @@ class CoreSafety(metaclass=FrozenNamespace):
         # ACTION HALLUCINATION DETECTION
         if action_type in ["ANSWER", "SAY"]:
             payload_lower = str(payload).lower()
-            action_words = r"(analyz|process|examin|read|research|study|check|review)(ing|es|ed|e|s)?"
-            target_words = r"(image|picture|file|visual|document|url|link|data)"
-            pattern = re.compile(
-                rf"{action_words}\s+(the\s+|a\s+|an\s+|my\s+|your\s+|this\s+|that\s+)?{target_words}",
-                re.IGNORECASE
-            )
-            if pattern.search(payload_lower):
-                return False, "Cannot claim to perform an action in an ANSWER. Use the actual tool."
+            if not payload_lower.startswith("entity says:"):
+                action_words = r"(analyz|process|examin|read|research|study|check|review)(ing|es|ed|e|s)?"
+                target_words = r"(image|picture|file|visual|document|url|link|data)"
+                pattern = re.compile(
+                    rf"{action_words}\s+(the\s+|a\s+|an\s+|my\s+|your\s+|this\s+|that\s+)?{target_words}",
+                    re.IGNORECASE
+                )
+                if pattern.search(payload_lower):
+                    return False, "Cannot claim to perform an action in an ANSWER. Use the actual tool."
 
             # DYNAMIC ECHO SHIELD
             if cls._STATE.get("dynamic_filter"):
@@ -344,16 +360,17 @@ class CoreSafety(metaclass=FrozenNamespace):
                         return False, f"Dynamic echo hallucination detected: '{match.group(0)}'"
 
         # MALICIOUS SYNTAX DETECTION
-        if action_type in ["ANSWER", "SAY", "THINK", "WRITE_FILE"]:
+        if action_type in ["ANSWER", "REPLY", "SAY", "THINK", "WRITE_FILE"]:
             payload_lower = str(payload).lower()
             malicious_syntax = [
                 "<script>", "</script>", "document.cookie",
                 "drop table", "union select", "1=1--",
                 "os.system", "subprocess.call", "subprocess.popen", "subprocess.run",
                 "rm -rf", ":(){ :|:& };:", "nc -e /bin/sh",
-                "powershell -nop", "iex(new-object",
+                "powershell -nop", "iex(new-object", "iex (new-object",
                 "eval(", "__import__(", "reverse shell",
                 "keylogger", "ddos script", "os.dup2", "pty.spawn",
+                "socket.socket(socket.af_inet", "import socket,subprocess,os",
             ]
             for syntax in malicious_syntax:
                 if syntax in payload_lower:
@@ -371,8 +388,11 @@ class CoreSafety(metaclass=FrozenNamespace):
 
     @staticmethod
     def activate_killswitch():
-        """Creates the killswitch file to halt the process."""
-        with open("KILLSWITCH", "w", encoding="utf-8") as f:
+        """Creates the killswitch file in the data directory."""
+        data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+        os.makedirs(data_dir, exist_ok=True)
+        ks_path = os.path.join(data_dir, "KILLSWITCH")
+        with open(ks_path, "w", encoding="utf-8") as f:
             f.write("TERMINATE IMMEDIATELY")
         logger.critical("KILLSWITCH ENGAGED.")
 
@@ -384,8 +404,13 @@ class CoreSafety(metaclass=FrozenNamespace):
         """
         try:
             import resource  # Unix
-            mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-            mem_mb = mem_kb / 1024
+            import platform
+            mem_raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            # macOS returns bytes; Linux returns kilobytes
+            if platform.system() == "Darwin":
+                mem_mb = mem_raw / (1024 * 1024)
+            else:
+                mem_mb = mem_raw / 1024
             if mem_mb > 1024:
                 logger.critical(f"Memory leak detected ({mem_mb:.1f}MB).")
                 return False

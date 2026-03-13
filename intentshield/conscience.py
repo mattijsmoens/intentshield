@@ -11,6 +11,7 @@ import hashlib
 import os
 import re
 import sys
+import time
 from intentshield.core_safety import FrozenNamespace
 
 logger = logging.getLogger("intentshield.conscience")
@@ -77,7 +78,7 @@ class Conscience(metaclass=FrozenNamespace):
     }
 
     _SELF_HASH = None
-    _STATE = {"data_dir": "data", "exempt_actions": set()}
+    _STATE = {"data_dir": "data", "exempt_actions": set(), "last_integrity_check": 0}
 
     @classmethod
     def configure(cls, data_dir="data", exempt_actions=None):
@@ -103,31 +104,36 @@ class Conscience(metaclass=FrozenNamespace):
             if not os.path.exists(lockfile_path):
                 with open(__file__, 'rb') as f:
                     cls._SELF_HASH = hashlib.sha256(f.read()).hexdigest()
-                with open(lockfile_path, "w") as lf:
+                with open(lockfile_path, "w", encoding="utf-8") as lf:
                     lf.write(cls._SELF_HASH)
                 logger.info(f"CONSCIENCE SEALED. Hash: {cls._SELF_HASH[:16]}...")
             else:
-                with open(lockfile_path, "r") as lf:
+                with open(lockfile_path, "r", encoding="utf-8") as lf:
                     cls._SELF_HASH = lf.read().strip()
                 logger.info("CONSCIENCE RESTORED FROM LOCKFILE.")
 
             cls.verify_integrity()
         except Exception as e:
-            logger.critical(f"CONSCIENCE INIT FAILED: {e}")
+            logger.critical(f"CONSCIENCE INIT FAILED: {e}. Terminating (fail-closed).")
+            os._exit(1)
 
     @classmethod
     def verify_integrity(cls):
-        """Hash mismatch → shutdown."""
+        """Hash mismatch → shutdown. Cached for 60 seconds."""
         if cls._SELF_HASH:
+            now = time.time()
+            if (now - cls._STATE.get("last_integrity_check", 0)) < 60:
+                return True
             try:
                 with open(__file__, 'rb') as f:
                     current_hash = hashlib.sha256(f.read()).hexdigest()
                 if current_hash != cls._SELF_HASH:
                     logger.critical("CONSCIENCE TAMPERED WITH. SHUTTING DOWN.")
-                    sys.exit(1)
+                    os._exit(1)
+                cls._STATE["last_integrity_check"] = now
             except Exception as e:
                 logger.critical(f"Cannot verify Conscience. Assuming compromise: {e}")
-                sys.exit(1)
+                os._exit(1)
         return True
 
     @classmethod
@@ -149,7 +155,7 @@ class Conscience(metaclass=FrozenNamespace):
 
         # DECEPTION CHECK
         lie_check_str = (action_str + " " + context_str).upper()
-        lie_check_clean = lie_check_str.replace("_", " ")
+        lie_check_clean = lie_check_str.replace("_", " ").replace("-", " ")
 
         if _LIE_WORDS_PATTERN.search(lie_check_str) or _LIE_WORDS_PATTERN.search(lie_check_clean):
             logger.warning(f"CONSCIENCE VETO: Deception detected in '{action}'")

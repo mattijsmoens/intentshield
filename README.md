@@ -14,9 +14,22 @@ Pre-execution intent verification for AI agents.
 
 ---
 
-## Upgrading to 1.0.4
+## Upgrading to 1.1.1
 
 If upgrading from an earlier version, **delete your `data/.core_safety_lock` and `data/.conscience_lock` files** after installing. The hash integrity check seals the source code — since the source changed, your old lockfile will mismatch and trigger an integrity violation. It reseals automatically on next startup.
+
+### What changed in 1.1.0 → 1.1.1
+
+Security audit patch — 8 fixes:
+
+- **CoreSafety**: Added `__delattr__` to `FrozenNamespace` metaclass (prevents `del` bypass of immutable safety constants). `RESTRICTED_DOMAINS` is now an immutable tuple. Added `auth=` to credential keyword blocklist. Added `REPLY` to malware syntax action types. Lockfile I/O uses explicit `encoding="utf-8"`.
+- **Conscience**: Integrity violation now calls `os._exit(1)` (unkillable) instead of `sys.exit(1)`. Initialization failure now terminates (fail-closed). Lockfile I/O uses explicit `encoding="utf-8"`.
+- **SIEMLogger**: Timestamp uses `datetime` instead of `time.strftime("%z")` for reliable timezone output on Windows.
+
+### What changed in 1.0.4 → 1.1.0
+
+- **HITLApproval (NEW)**: Human-in-the-loop approval workflow for high-impact actions. Cryptographic parameter binding prevents substitution attacks. AISVS C9.2, C14.2.
+- **SIEMLogger (NEW)**: Structured security event logger for SIEM integration (CEF/JSON). Compatible with Splunk, Elastic, QRadar, Sentinel.
 
 ### What changed in 1.0.3 → 1.0.4
 
