@@ -95,7 +95,17 @@ class Conscience(metaclass=FrozenNamespace):
 
     @classmethod
     def initialize(cls):
-        """Seals the ethics module hash for tamper detection."""
+        """Seals the ethics module hash for tamper detection.
+        
+        Safe to call multiple times — subsequent calls verify integrity
+        without attempting to re-set the immutable _SELF_HASH.
+        """
+        # Guard: if already sealed, just verify integrity
+        if cls._SELF_HASH is not None:
+            logger.debug("CONSCIENCE already sealed. Verifying integrity only.")
+            cls.verify_integrity()
+            return
+
         try:
             data_dir = cls._STATE.get("data_dir", "data")
             lockfile_path = os.path.join(data_dir, ".conscience_lock")

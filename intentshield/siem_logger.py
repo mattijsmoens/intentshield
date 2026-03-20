@@ -66,14 +66,18 @@ class SIEMLogger:
     def __init__(
         self,
         output_path=os.path.join("logs", "siem_events.log"),
-        format="json",
+        log_format="json",
         device_vendor="IntentShield",
         device_product="Pre-Execution Intent Verification",
-        device_version="1.0.4",
+        device_version="1.1.2",
         max_file_size_mb=50,
+        # Backward-compatible alias
+        format=None,
     ):
         self.output_path = output_path
-        self.format = format.lower()
+        # Support both 'log_format' and legacy 'format' parameter
+        effective_format = format if format is not None else log_format
+        self.log_format = effective_format.lower()
         self.device_vendor = device_vendor
         self.device_product = device_product
         self.device_version = device_version
@@ -126,7 +130,7 @@ class SIEMLogger:
         if extra:
             event["extra"] = extra
 
-        if self.format == "cef":
+        if self.log_format == "cef":
             line = self._to_cef(event)
         else:
             line = json.dumps(event, ensure_ascii=False)
@@ -222,4 +226,4 @@ class SIEMLogger:
         with open(self.output_path, "r", encoding="utf-8") as f:
             lines = sum(1 for _ in f)
         return {"lines": lines, "size_kb": round(size / 1024, 1),
-                "format": self.format, "output_path": self.output_path}
+                "format": self.log_format, "output_path": self.output_path}

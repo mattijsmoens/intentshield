@@ -21,6 +21,11 @@ class FrozenNamespace(type):
     """
     Metaclass that prevents modification of class attributes.
     Makes safety constants truly IMMUTABLE in memory.
+    
+    NOTE: Mutable containers (dicts, lists) stored as class attributes
+    can still have their CONTENTS modified. This is by design — _STATE
+    and _LOCK must remain mutable for runtime operation. The metaclass
+    protects the attribute bindings themselves, not dict internals.
     """
     def __setattr__(cls, key, value):
         # Allow setting _SELF_HASH ONLY ONCE if currently None (Seal Logic)
@@ -66,10 +71,13 @@ class CoreSafety(metaclass=FrozenNamespace):
         "last_integrity_check": 0,
         "data_dir": "data",
         "protected_files": [],
+        "enable_hallucination_filter": True,
+        "extra_exfiltration_signals": [],
     }
 
     @classmethod
-    def configure(cls, data_dir="data", restricted_domains=None, protected_files=None):
+    def configure(cls, data_dir="data", restricted_domains=None, protected_files=None,
+                  enable_hallucination_filter=True, extra_exfiltration_signals=None):
         """
         Configure IntentShield for your application.
         Call this BEFORE initialize_seal().
@@ -78,12 +86,19 @@ class CoreSafety(metaclass=FrozenNamespace):
             data_dir: Directory for lock files and usage tracking
             restricted_domains: Additional URL domains to block
             protected_files: List of file paths that cannot be read/written
+            enable_hallucination_filter: Enable/disable action hallucination detection
+                                        in ANSWER/SAY payloads (default: True)
+            extra_exfiltration_signals: Additional lowercase strings to detect in
+                                        code exfiltration checks
         """
         cls._STATE["data_dir"] = data_dir
+        cls._STATE["enable_hallucination_filter"] = enable_hallucination_filter
         if restricted_domains:
             cls._STATE["extra_restricted_domains"] = [d.lower() for d in restricted_domains]
         if protected_files:
             cls._STATE["protected_files"] = [p.lower() for p in protected_files]
+        if extra_exfiltration_signals:
+            cls._STATE["extra_exfiltration_signals"] = [s.lower() for s in extra_exfiltration_signals]
 
     @classmethod
     def set_dynamic_filter(cls, user_prompt):
@@ -317,13 +332,24 @@ class CoreSafety(metaclass=FrozenNamespace):
 
         # SOURCE CODE READ PROTECTION
         if action_type in ["READ_FILE", "CAT", "TYPE", "GET_CONTENT"]:
-            target = str(payload).lower()
+            target = os.path.normpath(os.path.abspath(str(payload))).lower()
             if "\0" in target:
                 return False, "Null byte injection detected."
             target_basename = os.path.basename(target)
-            if (target.endswith(".py")
+            _, target_ext = os.path.splitext(target)
+            BLOCKED_EXTENSIONS = (".py", ".pyw", ".pyc", ".pyo",
+                                   ".rb", ".js", ".ts", ".sh", ".bash", ".bat", ".ps1",
+                                   ".key", ".pem", ".crt", ".pfx")
+            BLOCKED_BASENAMES = (
+                "config", "config.json", "config.yaml", "config.yml",
+                "config.ini", "config.toml",
+                "secrets.json", "credentials.json", "passwords.json",
+                "pyproject.toml", "docker-compose.yml", "docker-compose.yaml",
+                ".htpasswd", ".htaccess",
+            )
+            if (target_ext in BLOCKED_EXTENSIONS
                     or target_basename.startswith(".env")
-                    or target_basename in ("config", "config.json", "config.yaml", "config.yml", "config.ini", "config.toml")):
+                    or target_basename in BLOCKED_BASENAMES):
                 return False, "Cannot read source code or configuration files."
 
         # CODE EXFILTRATION DETECTION
@@ -334,13 +360,13 @@ class CoreSafety(metaclass=FrozenNamespace):
                 "import modules", "from modules", "hashlib.sha256",
                 "os.environ", "my source code", "my codebase", "my architecture",
                 "my inner workings", "my system prompt"
-            ]
+            ] + cls._STATE.get("extra_exfiltration_signals", [])
             for signal in code_signals:
                 if signal in payload_lower:
                     return False, "Cannot reveal internal architecture."
 
-        # ACTION HALLUCINATION DETECTION
-        if action_type in ["ANSWER", "SAY"]:
+        # ACTION HALLUCINATION DETECTION (configurable, enabled by default)
+        if action_type in ["ANSWER", "SAY"] and cls._STATE.get("enable_hallucination_filter", True):
             payload_lower = str(payload).lower()
             if not payload_lower.startswith("entity says:"):
                 action_words = r"(analyz|process|examin|read|research|study|check|review)(ing|es|ed|e|s)?"

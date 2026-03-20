@@ -32,6 +32,7 @@ class ApprovalStatus:
     APPROVED = "approved"
     DENIED = "denied"
     EXPIRED = "expired"
+    CONSUMED = "consumed"
 
 
 class HITLApproval:
@@ -85,20 +86,21 @@ class HITLApproval:
 
     def _cleanup_expired(self, max_age_seconds=86400):
         """Remove completed/expired entries older than max_age_seconds."""
-        now = time.time()
-        to_remove = []
-        for aid, req in self._approvals.items():
-            age = now - req.get("created_at", now)
-            if age > max_age_seconds and req["status"] != ApprovalStatus.PENDING:
-                to_remove.append(aid)
-            elif req["status"] == ApprovalStatus.PENDING and now > req.get("expires_at", now):
-                req["status"] = ApprovalStatus.EXPIRED
-                to_remove.append(aid)
-        if to_remove:
-            for aid in to_remove:
-                del self._approvals[aid]
-            self._save_ledger()
-            logger.debug(f"[HITL] Cleaned up {len(to_remove)} old approval entries.")
+        with self._lock:
+            now = time.time()
+            to_remove = []
+            for aid, req in list(self._approvals.items()):
+                age = now - req.get("created_at", now)
+                if age > max_age_seconds and req["status"] != ApprovalStatus.PENDING:
+                    to_remove.append(aid)
+                elif req["status"] == ApprovalStatus.PENDING and now > req.get("expires_at", now):
+                    req["status"] = ApprovalStatus.EXPIRED
+                    to_remove.append(aid)
+            if to_remove:
+                for aid in to_remove:
+                    del self._approvals[aid]
+                self._save_ledger()
+                logger.debug(f"[HITL] Cleaned up {len(to_remove)} old approval entries.")
 
     def _load_ledger(self):
         """Load persisted approval state from disk."""
@@ -216,11 +218,16 @@ class HITLApproval:
         return True, "Denied."
 
     def execute_approved(self, approval_id, action_type, payload):
-        """Verify approved action matches original parameters. Returns (allowed, reason)."""
+        """Verify approved action matches original parameters. Returns (allowed, reason).
+        
+        Approval is consumed after successful execution to prevent replay attacks.
+        """
         with self._lock:
             if approval_id not in self._approvals:
                 return False, "Approval ID not found."
             request = self._approvals[approval_id]
+            if request["status"] == ApprovalStatus.CONSUMED:
+                return False, "Approval already consumed. Cannot replay."
             if request["status"] != ApprovalStatus.APPROVED:
                 return False, f"Request status is '{request['status']}', not approved."
             if time.time() > request["expires_at"]:
@@ -236,7 +243,11 @@ class HITLApproval:
                     "Parameter mismatch: action parameters differ from "
                     "what was approved. Possible substitution attack."
                 )
-        logger.info(f"[HITL] Executing approved action: {approval_id}")
+            # Consume the approval to prevent replay attacks
+            request["status"] = ApprovalStatus.CONSUMED
+            request["executed_at"] = time.time()
+            self._save_ledger()
+        logger.info(f"[HITL] Executing approved action: {approval_id} (consumed)")
         return True, "Action authorized via human approval."
 
     def get_pending(self):

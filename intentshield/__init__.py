@@ -10,7 +10,7 @@ from intentshield.shield import IntentShield
 from intentshield.hitl import HITLApproval, ApprovalStatus
 from intentshield.siem_logger import SIEMLogger
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 __all__ = [
     "IntentShield", "CoreSafety", "Conscience", "ActionParser",
     "HITLApproval", "ApprovalStatus", "SIEMLogger",

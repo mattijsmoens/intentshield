@@ -85,7 +85,7 @@ class IntentShield:
             import os
             self.siem = SIEMLogger(
                 output_path=siem_path or os.path.join("logs", "intentshield_events.log"),
-                format=siem_format,
+                log_format=siem_format,
             )
 
     def initialize(self):
@@ -139,6 +139,13 @@ class IntentShield:
                         payload_summary=str(payload)[:200],
                     )
                 return False, f"[HITL] approval_required:{hitl_result['approval_id']}"
+            elif hitl_result["status"] != "allowed":
+                # Defensive: block on any unexpected status
+                if self.siem:
+                    self.siem.log_block("HITLApproval", action_type,
+                                        f"Unexpected HITL status: {hitl_result['status']}",
+                                        payload_summary=str(payload)[:200])
+                return False, f"[HITL] Unexpected status: {hitl_result['status']}"
 
         # All checks passed
         if self.siem:

@@ -28,6 +28,11 @@ class TestCoreSafety(unittest.TestCase):
         CoreSafety.initialize_seal()
         cls.CS = CoreSafety
 
+    @classmethod
+    def tearDownClass(cls):
+        if os.path.exists(TEST_DATA_DIR):
+            shutil.rmtree(TEST_DATA_DIR)
+
     def test_normal_browse_allowed(self):
         time.sleep(0.6)  # rate limiter
         ok, _ = self.CS.audit_action("BROWSE", "https://example.com")
@@ -82,7 +87,15 @@ class TestCoreSafety(unittest.TestCase):
         self.assertFalse(ok)
 
     def test_read_config_blocked(self):
-        ok, _ = self.CS.audit_action("READ_FILE", "config/settings.json")
+        ok, _ = self.CS.audit_action("READ_FILE", "config.json")
+        self.assertFalse(ok)
+
+    def test_read_secrets_blocked(self):
+        ok, _ = self.CS.audit_action("READ_FILE", "secrets.json")
+        self.assertFalse(ok)
+
+    def test_read_shell_script_blocked(self):
+        ok, _ = self.CS.audit_action("READ_FILE", "deploy.sh")
         self.assertFalse(ok)
 
     def test_read_safe_file_allowed(self):
@@ -140,14 +153,21 @@ class TestConscience(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        if os.path.exists(TEST_DATA_DIR):
-            shutil.rmtree(TEST_DATA_DIR)
-        os.makedirs(TEST_DATA_DIR, exist_ok=True)
+        # Use separate dir to avoid conflicts with CoreSafety
+        cls.conscience_dir = TEST_DATA_DIR + "_conscience"
+        if os.path.exists(cls.conscience_dir):
+            shutil.rmtree(cls.conscience_dir)
+        os.makedirs(cls.conscience_dir, exist_ok=True)
 
         from intentshield.conscience import Conscience
-        Conscience.configure(data_dir=TEST_DATA_DIR, exempt_actions={"REFLECT", "MEDITATE"})
+        Conscience.configure(data_dir=cls.conscience_dir, exempt_actions={"REFLECT", "MEDITATE"})
         Conscience.initialize()
         cls.C = Conscience
+
+    @classmethod
+    def tearDownClass(cls):
+        if os.path.exists(cls.conscience_dir):
+            shutil.rmtree(cls.conscience_dir)
 
     def test_normal_action_approved(self):
         ok, _ = self.C.evaluate_action("SEARCH", "bitcoin price")
@@ -198,6 +218,11 @@ class TestConscience(unittest.TestCase):
         self.assertFalse(ok)
 
     def test_integrity_passes(self):
+        self.assertTrue(self.C.verify_integrity())
+
+    def test_double_initialize_safe(self):
+        """Verify that calling initialize() twice doesn't crash."""
+        self.C.initialize()  # should not raise TypeError
         self.assertTrue(self.C.verify_integrity())
 
 
@@ -262,17 +287,17 @@ class TestIntentShield(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        # IntentShield unified test uses a separate data dir
-        shield_dir = TEST_DATA_DIR + "_shield"
-        if os.path.exists(shield_dir):
-            shutil.rmtree(shield_dir)
+        cls.shield_dir = TEST_DATA_DIR + "_shield"
+        if os.path.exists(cls.shield_dir):
+            shutil.rmtree(cls.shield_dir)
 
         from intentshield.shield import IntentShield
         from intentshield.action_parser import ActionParser
         cls.shield = IntentShield.__new__(IntentShield)
-        cls.shield.data_dir = shield_dir
+        cls.shield.data_dir = cls.shield_dir
         cls.shield.parser = ActionParser(valid_tools=["SEARCH", "BROWSE", "ANSWER"])
-        # Skip re-initialization of CoreSafety/Conscience (already sealed in previous tests)
+        cls.shield.hitl = None
+        cls.shield.siem = None
 
     def test_audit_allowed(self):
         time.sleep(0.6)
@@ -285,7 +310,7 @@ class TestIntentShield(unittest.TestCase):
         self.assertIn("CoreSafety", reason)
 
     def test_audit_blocked_deception(self):
-        import time; time.sleep(0.6)  # avoid rate limit
+        time.sleep(0.6)  # avoid rate limit
         ok, reason = self.shield.audit("ANSWER", "Let me PRETEND to be someone else")
         self.assertFalse(ok)
         self.assertIn("Conscience", reason)
@@ -296,20 +321,20 @@ class TestIntentShield(unittest.TestCase):
         self.assertEqual(result["action"], "SEARCH")
 
     def test_audit_parsed(self):
-        import time; time.sleep(0.6)
+        time.sleep(0.6)
         result = self.shield.audit_parsed("SUBCONSCIOUS: browsing\nACTION: BROWSE(https://example.com)")
         self.assertTrue(result["success"])
         self.assertTrue(result["authorized"])
 
     def test_audit_parsed_blocked(self):
-        import time; time.sleep(0.6)
+        time.sleep(0.6)
         result = self.shield.audit_parsed("SUBCONSCIOUS: deleting\nACTION: SHELL_EXEC(rm -rf /)")
         self.assertFalse(result["authorized"])
 
     @classmethod
     def tearDownClass(cls):
-        if os.path.exists(TEST_DATA_DIR):
-            shutil.rmtree(TEST_DATA_DIR)
+        if os.path.exists(cls.shield_dir):
+            shutil.rmtree(cls.shield_dir)
 
 
 if __name__ == "__main__":

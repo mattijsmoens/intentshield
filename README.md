@@ -14,9 +14,23 @@ Pre-execution intent verification for AI agents.
 
 ---
 
-## Upgrading to 1.1.1
+## Upgrading to 1.1.2
 
 If upgrading from an earlier version, **delete your `data/.core_safety_lock` and `data/.conscience_lock` files** after installing. The hash integrity check seals the source code — since the source changed, your old lockfile will mismatch and trigger an integrity violation. It reseals automatically on next startup.
+
+### What changed in 1.1.1 → 1.1.2
+
+Bug fix and hardening release — 11 fixes:
+
+- **HITL Security**: Fixed replay attack — approvals are now consumed after execution and cannot be reused. Added `CONSUMED` status.
+- **HITL Thread Safety**: `_cleanup_expired()` now acquires the thread lock to prevent race conditions.
+- **CoreSafety**: Hallucination detection filter is now configurable via `enable_hallucination_filter` parameter (default: `True`). Code exfiltration signals extensible via `extra_exfiltration_signals`.
+- **CoreSafety**: Expanded `READ_FILE` protection — now blocks `.sh`, `.bat`, `.ps1`, `.js`, `.ts`, `.rb`, `.key`, `.pem`, `.crt`, `.pfx`, `secrets.json`, `credentials.json`, `pyproject.toml`, `docker-compose.yml`, `.htpasswd`, `.htaccess`.
+- **CoreSafety**: Documented `FrozenNamespace` `_STATE` dict bypass as known design decision.
+- **Conscience**: `initialize()` is now safe to call multiple times (guards against double-seal crash).
+- **Shield**: Unexpected HITL statuses are now blocked (fail-closed) instead of silently passing.
+- **SIEMLogger**: Renamed `format` parameter to `log_format` to avoid shadowing Python built-in. Backward-compatible.
+- **Tests**: Fixed `test_read_config_blocked` false positive. Each test class now has isolated setup/teardown. Added tests for new file protections and double-init safety.
 
 ### What changed in 1.1.0 → 1.1.1
 
@@ -156,6 +170,9 @@ shield = IntentShield(
     restricted_domains=["darkweb", ".onion"],       # Blocked URL patterns
     protected_files=["secrets.json", ".env"],       # Untouchable files
     exempt_actions={"REFLECT"},                     # Skip harm-word check for these
+    enable_hitl=True,                              # Human-in-the-loop (opt-in)
+    enable_siem=True,                              # SIEM logging (opt-in)
+    siem_format="json",                            # "json" or "cef"
 )
 ```
 
@@ -173,7 +190,7 @@ Runs 30+ real attack vectors against all three layers and displays a color-coded
 python -m unittest tests.test_intentshield -v
 ```
 
-53 test cases covering CoreSafety, Conscience, and ActionParser.
+56 test cases covering CoreSafety, Conscience, ActionParser, and IntentShield unified API.
 
 ## Zero Dependencies
 
