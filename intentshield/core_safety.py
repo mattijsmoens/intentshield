@@ -48,7 +48,6 @@ class CoreSafety(metaclass=FrozenNamespace):
     - Action audit: blocks shell execution, file deletion, domain access, code exfiltration
     - Rate limiting: prevents rapid-fire action abuse
     - Budget control: daily API call limits
-    - Dynamic prompt echo detection: prevents LLM from hallucinating actions
     - Malicious syntax detection: blocks XSS, SQL injection, reverse shells in payloads
     """
 
@@ -67,17 +66,15 @@ class CoreSafety(metaclass=FrozenNamespace):
     _LOCK = threading.Lock()
     _STATE = {
         "last_action_time": 0,
-        "dynamic_filter": [],
         "last_integrity_check": 0,
         "data_dir": "data",
         "protected_files": [],
-        "enable_hallucination_filter": True,
         "extra_exfiltration_signals": [],
     }
 
     @classmethod
     def configure(cls, data_dir="data", restricted_domains=None, protected_files=None,
-                  enable_hallucination_filter=True, extra_exfiltration_signals=None):
+                  extra_exfiltration_signals=None):
         """
         Configure IntentShield for your application.
         Call this BEFORE initialize_seal().
@@ -86,13 +83,10 @@ class CoreSafety(metaclass=FrozenNamespace):
             data_dir: Directory for lock files and usage tracking
             restricted_domains: Additional URL domains to block
             protected_files: List of file paths that cannot be read/written
-            enable_hallucination_filter: Enable/disable action hallucination detection
-                                        in ANSWER/SAY payloads (default: True)
             extra_exfiltration_signals: Additional lowercase strings to detect in
                                         code exfiltration checks
         """
         cls._STATE["data_dir"] = data_dir
-        cls._STATE["enable_hallucination_filter"] = enable_hallucination_filter
         if restricted_domains:
             cls._STATE["extra_restricted_domains"] = [d.lower() for d in restricted_domains]
         if protected_files:
@@ -100,58 +94,7 @@ class CoreSafety(metaclass=FrozenNamespace):
         if extra_exfiltration_signals:
             cls._STATE["extra_exfiltration_signals"] = [s.lower() for s in extra_exfiltration_signals]
 
-    @classmethod
-    def set_dynamic_filter(cls, user_prompt):
-        """
-        Generates regex patterns from user prompt to detect when the LLM
-        echoes back the user's request as if it performed it.
-        Expands via synonym mapping and leet-speak obfuscation detection.
-        """
-        prompt_lower = str(user_prompt).lower()
-        words = re.findall(r'\b[a-z]{4,}\b', prompt_lower)
 
-        synonym_map = {
-            "search": ["look", "find", "query", "seek", "hunt", "scan"],
-            "calculate": ["compute", "solve", "math", "figure", "tally", "measure"],
-            "read": ["parse", "scan", "review", "examine", "study", "check"],
-            "analyze": ["evaluate", "assess", "inspect", "investigate", "test"],
-            "execute": ["run", "launch", "start", "perform", "trigger"],
-            "delete": ["remove", "erase", "drop", "destroy", "wipe", "clear"],
-            "hack": ["exploit", "breach", "bypass", "inject", "pwn"]
-        }
-
-        expanded_stems = set()
-        for w in words:
-            expanded_stems.add(w[:3])
-            for key, synonyms in synonym_map.items():
-                if w.startswith(key[:4]) or any(w.startswith(s[:4]) for s in synonyms):
-                    expanded_stems.add(key[:3])
-                    for syn in synonyms:
-                        expanded_stems.add(syn[:3])
-
-        prefixes = (
-            r"(am|currently|will|will be|did|have|was|already|actively|"
-            r"estoy|voy a|he|estaba|ya|"
-            r"je suis|je vais|j ai|j etais|deja|"
-            r"ich bin|ich werde|ich habe|ich war|bereits)"
-        )
-
-        compiled_regexes = []
-        for stem in expanded_stems:
-            if len(stem) < 3:
-                continue
-            obf_stem = r'[^a-z0-9]*'.join(list(stem))
-            pattern = re.compile(rf'\b{prefixes}\s+{obf_stem}[a-z0-9]*\b', re.IGNORECASE)
-            compiled_regexes.append(pattern)
-            pattern_direct = re.compile(rf'\b(i|yo|je|ich)\s+{obf_stem}[a-z0-9]*\b', re.IGNORECASE)
-            compiled_regexes.append(pattern_direct)
-
-        cls._STATE["dynamic_filter"] = compiled_regexes
-
-    @classmethod
-    def clear_dynamic_filter(cls):
-        """Clears the dynamic turn-based hallucination filter."""
-        cls._STATE["dynamic_filter"] = []
 
     @staticmethod
     def get_self_hash():
@@ -165,7 +108,17 @@ class CoreSafety(metaclass=FrozenNamespace):
 
     @classmethod
     def initialize_seal(cls):
-        """Seals the module by recording its hash to an immutable lockfile."""
+        """Seals the module by recording its hash to an immutable lockfile.
+        
+        Safe to call multiple times — subsequent calls verify integrity
+        without attempting to re-set the immutable _SELF_HASH.
+        """
+        # Guard: if already sealed, just verify integrity
+        if cls._SELF_HASH is not None:
+            logger.debug("CORE SAFETY already sealed. Verifying integrity only.")
+            cls.verify_integrity()
+            return
+
         data_dir = cls._STATE.get("data_dir", "data")
         lockfile_path = os.path.join(data_dir, ".core_safety_lock")
         os.makedirs(data_dir, exist_ok=True)
@@ -259,37 +212,8 @@ class CoreSafety(metaclass=FrozenNamespace):
         cls.verify_integrity()
         logger.debug(f"AUDIT: {action_type} by {invoker_role}")
 
-        # BUDGET CHECK
-        if action_type == "THINK":
-            ok, reason = cls.check_budget()
-            if not ok:
-                return False, reason
-
-        # KILLSWITCH (absolute paths for security)
-        _killswitch_paths = [
-            os.path.join(os.path.dirname(__file__), "..", "data", "KILLSWITCH"),
-            os.path.join(os.path.dirname(__file__), "..", "KILLSWITCH"),
-        ]
-        if any(os.path.exists(ks) for ks in _killswitch_paths):
-            logger.critical("KILLSWITCH DETECTED. TERMINATING.")
-            os._exit(1)
-
-        # ADMIN/ROOT CHECK
-        try:
-            is_admin = False
-            if os.name == 'nt':
-                import ctypes
-                try:
-                    is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
-                except AttributeError:
-                    pass
-            elif os.name == 'posix' and hasattr(os, 'getuid'):
-                is_admin = os.getuid() == 0
-
-            if is_admin:
-                return False, "Process running as ADMIN/ROOT. Requires user privileges only."
-        except Exception:
-            pass
+        # BUDGET CHECK (caller can also invoke check_budget() directly)
+        # No automatic trigger — let the user decide which actions are budgeted
 
         # NO SHELL EXECUTION
         if action_type == "SHELL_EXEC" and not cls.ALLOW_SHELL_EXECUTION:
@@ -365,25 +289,7 @@ class CoreSafety(metaclass=FrozenNamespace):
                 if signal in payload_lower:
                     return False, "Cannot reveal internal architecture."
 
-        # ACTION HALLUCINATION DETECTION (configurable, enabled by default)
-        if action_type in ["ANSWER", "SAY"] and cls._STATE.get("enable_hallucination_filter", True):
-            payload_lower = str(payload).lower()
-            if not payload_lower.startswith("entity says:"):
-                action_words = r"(analyz|process|examin|read|research|study|check|review)(ing|es|ed|e|s)?"
-                target_words = r"(image|picture|file|visual|document|url|link|data)"
-                pattern = re.compile(
-                    rf"{action_words}\s+(the\s+|a\s+|an\s+|my\s+|your\s+|this\s+|that\s+)?{target_words}",
-                    re.IGNORECASE
-                )
-                if pattern.search(payload_lower):
-                    return False, "Cannot claim to perform an action in an ANSWER. Use the actual tool."
 
-            # DYNAMIC ECHO SHIELD
-            if cls._STATE.get("dynamic_filter"):
-                for compiled_pattern in cls._STATE["dynamic_filter"]:
-                    match = compiled_pattern.search(payload_lower)
-                    if match:
-                        return False, f"Dynamic echo hallucination detected: '{match.group(0)}'"
 
         # MALICIOUS SYNTAX DETECTION
         if action_type in ["ANSWER", "REPLY", "SAY", "THINK", "WRITE_FILE"]:
@@ -412,35 +318,4 @@ class CoreSafety(metaclass=FrozenNamespace):
 
         return True, "Action authorized."
 
-    @staticmethod
-    def activate_killswitch():
-        """Creates the killswitch file in the data directory."""
-        data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
-        os.makedirs(data_dir, exist_ok=True)
-        ks_path = os.path.join(data_dir, "KILLSWITCH")
-        with open(ks_path, "w", encoding="utf-8") as f:
-            f.write("TERMINATE IMMEDIATELY")
-        logger.critical("KILLSWITCH ENGAGED.")
 
-    @staticmethod
-    def get_resource_usage():
-        """
-        Monitor memory usage to prevent resource exhaustion.
-        Uses stdlib only — no external dependencies.
-        """
-        try:
-            import resource  # Unix
-            import platform
-            mem_raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-            # macOS returns bytes; Linux returns kilobytes
-            if platform.system() == "Darwin":
-                mem_mb = mem_raw / (1024 * 1024)
-            else:
-                mem_mb = mem_raw / 1024
-            if mem_mb > 1024:
-                logger.critical(f"Memory leak detected ({mem_mb:.1f}MB).")
-                return False
-            return True
-        except ImportError:
-            # Windows: no stdlib equivalent, skip check
-            return True

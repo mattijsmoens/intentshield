@@ -40,7 +40,6 @@ _EVENT_SEVERITY = {
     "ethical_violation": Severity.MEDIUM,
     "code_exfiltration": Severity.VERY_HIGH,
     "integrity_violation": Severity.CRITICAL,
-    "killswitch_activated": Severity.CRITICAL,
     "approval_requested": Severity.MEDIUM,
     "approval_granted": Severity.INFO,
     "approval_denied": Severity.MEDIUM,
@@ -221,7 +220,7 @@ class SIEMLogger:
     @property
     def stats(self):
         if not os.path.exists(self.output_path):
-            return {"lines": 0, "size_kb": 0, "format": self.format}
+            return {"lines": 0, "size_kb": 0, "format": self.log_format}
         size = os.path.getsize(self.output_path)
         with open(self.output_path, "r", encoding="utf-8") as f:
             lines = sum(1 for _ in f)

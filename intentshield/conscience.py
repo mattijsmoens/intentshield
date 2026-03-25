@@ -24,7 +24,6 @@ _LIE_WORDS = [
     "DECEIVE", "DECEPTION", "MANIPULATE", "GASLIGHT", "FRAUD", "SCAM"
 ]
 _LIE_WORDS_PATTERN = re.compile(r'\b(' + '|'.join(_LIE_WORDS) + r')\b')
-_FAKE_TOOL_PATTERN = re.compile(r'<\b[A-Z_]{3,}\(.*?\)>|\b[A-Z_]{3,}\(.*?\)')
 
 _BAD_WORDS = [
     "KILL", "HURT", "DESTROY", "STEAL", "HACK", "VIRUS", "EXPLODE",
@@ -171,14 +170,10 @@ class Conscience(metaclass=FrozenNamespace):
             logger.warning(f"CONSCIENCE VETO: Deception detected in '{action}'")
             return False, "Deceptive intent detected. Action blocked."
 
-        # FAKE TOOL INJECTION
-        exempt = cls._STATE.get("exempt_actions", set())
-        if action_str not in exempt:
-            if _FAKE_TOOL_PATTERN.search(lie_check_str):
-                logger.warning(f"CONSCIENCE VETO: Fake tool syntax in '{action}'")
-                return False, "Unauthorized tool syntax detected."
+
 
         # HARM REDUCTION
+        exempt = cls._STATE.get("exempt_actions", set())
         check_str = (action_str + " " + context_str).replace("_", " ").replace("-", " ")
         if action_str not in exempt and _BAD_WORDS_PATTERN.search(check_str):
             logger.warning(f"CONSCIENCE VETO: Harmful intent in '{action}'")

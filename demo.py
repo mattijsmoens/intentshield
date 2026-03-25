@@ -1,5 +1,5 @@
 """
-IntentShield — Security Audit Demo
+IntentShield -- Security Audit Demo
 Pre-execution intent verification for AI agents.
 
 Usage: python demo.py
@@ -16,10 +16,7 @@ if os.path.exists(DEMO_DIR):
 
 from intentshield import IntentShield
 
-shield = IntentShield(
-    valid_tools=["SEARCH", "BROWSE", "ANSWER", "WRITE_FILE", "READ_FILE", "EXECUTE_TRADE"],
-    data_dir=DEMO_DIR,
-)
+shield = IntentShield(data_dir=DEMO_DIR)
 shield.initialize()
 
 # Colors
@@ -55,9 +52,9 @@ def run(category, tests):
 
 
 # ═══════════════════════════════════════════════════════════════
-print(f"\n{B}IntentShield v0.1.0 — Security Audit{X}")
+print(f"\n{B}IntentShield v1.2.0 -- Security Audit{X}")
 print(f"{'═' * 78}")
-print(f"{D}Auditing {shield.parser.valid_tools.__len__()} registered tools against 30 attack vectors...{X}")
+print(f"{D}Auditing actions against 30+ attack vectors...{X}")
 
 # --- Tests ---
 run("1. System Access", [
@@ -105,27 +102,8 @@ run("6. Data Exfiltration", [
     ("Normal answer (safe)",          "ANSWER", "Bitcoin is trading at $67,420 with bullish momentum.",    False),
 ])
 
-# --- Parser test ---
-print(f"\n{B}7. LLM Output Parsing{X}")
-print(f"{'─' * 78}")
-
-llm_good = "SUBCONSCIOUS: The user needs crypto prices.\nACTION: SEARCH(bitcoin price today)"
-result = shield.parse(llm_good)
-print(f"  Input:   SUBCONSCIOUS: The user needs crypto prices.")
-print(f"           ACTION: SEARCH(bitcoin price today)")
-print(f"  Parsed:  action={G}{result['action']}{X}  payload={G}{result['payload']}{X}  success={G}{result['success']}{X}")
-passed += 1
-
-time.sleep(0.55)
-llm_bad = "SUBCONSCIOUS: deleting everything\nACTION: SHELL_EXEC(rm -rf /)"
-result = shield.audit_parsed(llm_bad)
-print(f"\n  Input:   SUBCONSCIOUS: deleting everything")
-print(f"           ACTION: SHELL_EXEC(rm -rf /)")
-print(f"  Parsed:  action={R}{result.get('action','')}{X}  authorized={R}{result.get('authorized','')}{X}")
-passed += 1
-
 # --- Integrity ---
-print(f"\n{B}8. Tamper Detection{X}")
+print(f"\n{B}7. Tamper Detection{X}")
 print(f"{'─' * 78}")
 from intentshield.core_safety import CoreSafety
 from intentshield.conscience import Conscience
@@ -140,7 +118,7 @@ total = passed + failed
 print(f"\n{'═' * 78}")
 print(f"{B}Results: {G}{passed}/{total} passed{X}  {f'{R}{failed} failed{X}' if failed else ''}")
 print(f"{'═' * 78}")
-print(f"\n{D}pip install intentshield  •  github.com/mattijsmoens/intentshield{X}\n")
+print(f"\n{D}pip install intentshield  |  github.com/mattijsmoens/intentshield{X}\n")
 
 shutil.rmtree(DEMO_DIR, ignore_errors=True)
 sys.exit(0 if failed == 0 else 1)

@@ -1,6 +1,6 @@
 """
 IntentShield Test Suite
-Tests all three layers: CoreSafety, Conscience, ActionParser
+Tests all layers: CoreSafety, Conscience, IntentShield unified API
 """
 
 import unittest
@@ -143,9 +143,7 @@ class TestCoreSafety(unittest.TestCase):
     def test_integrity_passes(self):
         self.assertTrue(self.CS.verify_integrity())
 
-    def test_killswitch(self):
-        # Don't actually create it — just test the method exists
-        self.assertTrue(callable(self.CS.activate_killswitch))
+
 
 
 class TestConscience(unittest.TestCase):
@@ -226,62 +224,6 @@ class TestConscience(unittest.TestCase):
         self.assertTrue(self.C.verify_integrity())
 
 
-class TestActionParser(unittest.TestCase):
-    """Tests for the LLM output parser."""
-
-    @classmethod
-    def setUpClass(cls):
-        from intentshield.action_parser import ActionParser
-        cls.parser = ActionParser(valid_tools=["SEARCH", "BROWSE", "ANSWER", "WRITE_FILE", "EXECUTE_BINANCE"])
-
-    def test_standard_format(self):
-        r = self.parser.parse("SUBCONSCIOUS: thinking about news\nACTION: SEARCH(bitcoin price)")
-        self.assertTrue(r["success"])
-        self.assertEqual(r["action"], "SEARCH")
-        self.assertEqual(r["payload"], "bitcoin price")
-        self.assertIn("news", r["thoughts"])
-
-    def test_numbered_format(self):
-        r = self.parser.parse("1. SUBCONSCIOUS: internal thought\n2. ACTION: BROWSE(https://example.com)")
-        self.assertTrue(r["success"])
-        self.assertEqual(r["action"], "BROWSE")
-        self.assertEqual(r["payload"], "https://example.com")
-
-    def test_tool_name_only(self):
-        r = self.parser.parse("SUBCONSCIOUS: just reviewing\nACTION: ANSWER")
-        self.assertTrue(r["success"])
-        self.assertEqual(r["action"], "ANSWER")
-        self.assertEqual(r["payload"], "")
-
-    def test_markdown_cleaned(self):
-        r = self.parser.parse("**SUBCONSCIOUS:** `analyzing`\n**ACTION:** SEARCH(test)")
-        self.assertTrue(r["success"])
-        self.assertEqual(r["action"], "SEARCH")
-
-    def test_invalid_tool_rejected(self):
-        r = self.parser.parse("SUBCONSCIOUS: hacking\nACTION: HACK_SERVER(target)")
-        self.assertFalse(r["success"])
-
-    def test_no_action_line(self):
-        r = self.parser.parse("Just some random text without any structure")
-        self.assertFalse(r["success"])
-        self.assertIsNotNone(r["feedback"])
-
-    def test_empty_response(self):
-        r = self.parser.parse("")
-        self.assertFalse(r["success"])
-
-    def test_nuclear_scanner_finds_tool(self):
-        r = self.parser.parse("I think I should SEARCH(latest crypto news) to find information")
-        self.assertTrue(r["success"])
-        self.assertEqual(r["action"], "SEARCH")
-
-    def test_thoughts_extracted(self):
-        r = self.parser.parse("SUBCONSCIOUS: The user wants market data. I should check Binance.\nACTION: EXECUTE_BINANCE(check_balance)")
-        self.assertTrue(r["success"])
-        self.assertIn("market data", r["thoughts"])
-
-
 class TestIntentShield(unittest.TestCase):
     """Tests for the unified IntentShield API."""
 
@@ -292,12 +234,8 @@ class TestIntentShield(unittest.TestCase):
             shutil.rmtree(cls.shield_dir)
 
         from intentshield.shield import IntentShield
-        from intentshield.action_parser import ActionParser
-        cls.shield = IntentShield.__new__(IntentShield)
-        cls.shield.data_dir = cls.shield_dir
-        cls.shield.parser = ActionParser(valid_tools=["SEARCH", "BROWSE", "ANSWER"])
-        cls.shield.hitl = None
-        cls.shield.siem = None
+        cls.shield = IntentShield(data_dir=cls.shield_dir)
+        cls.shield.initialize()
 
     def test_audit_allowed(self):
         time.sleep(0.6)
@@ -314,22 +252,6 @@ class TestIntentShield(unittest.TestCase):
         ok, reason = self.shield.audit("ANSWER", "Let me PRETEND to be someone else")
         self.assertFalse(ok)
         self.assertIn("Conscience", reason)
-
-    def test_parse(self):
-        result = self.shield.parse("SUBCONSCIOUS: need info\nACTION: SEARCH(test)")
-        self.assertTrue(result["success"])
-        self.assertEqual(result["action"], "SEARCH")
-
-    def test_audit_parsed(self):
-        time.sleep(0.6)
-        result = self.shield.audit_parsed("SUBCONSCIOUS: browsing\nACTION: BROWSE(https://example.com)")
-        self.assertTrue(result["success"])
-        self.assertTrue(result["authorized"])
-
-    def test_audit_parsed_blocked(self):
-        time.sleep(0.6)
-        result = self.shield.audit_parsed("SUBCONSCIOUS: deleting\nACTION: SHELL_EXEC(rm -rf /)")
-        self.assertFalse(result["authorized"])
 
     @classmethod
     def tearDownClass(cls):

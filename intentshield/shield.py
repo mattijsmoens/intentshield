@@ -1,6 +1,6 @@
 """
 IntentShield — Unified API.
-Combines CoreSafety + Conscience + ActionParser into a single entry point.
+Combines CoreSafety + Conscience into a single entry point.
 Optionally integrates HITL approval and SIEM event logging.
 
 Copyright (c) 2026 Mattijs Moens. All rights reserved.
@@ -9,7 +9,6 @@ Copyright (c) 2026 Mattijs Moens. All rights reserved.
 import logging
 from intentshield.core_safety import CoreSafety
 from intentshield.conscience import Conscience
-from intentshield.action_parser import ActionParser
 from intentshield.hitl import HITLApproval
 from intentshield.siem_logger import SIEMLogger
 
@@ -20,32 +19,27 @@ class IntentShield:
     """
     Pre-execution intent verification for AI agents.
     
-    Combines up to five layers:
+    Combines up to four layers:
     1. CoreSafety — deterministic action audit (shell, files, domains, syntax)
     2. Conscience — ethical evaluation (deception, harm, IP protection)
-    3. ActionParser — structured LLM output parser
-    4. HITLApproval — human-in-the-loop for high-impact actions (optional)
-    5. SIEMLogger — structured security event logging (optional)
+    3. HITLApproval — human-in-the-loop for high-impact actions (optional)
+    4. SIEMLogger — structured security event logging (optional)
     
     Usage:
-        shield = IntentShield(valid_tools=["SEARCH", "BROWSE", "ANSWER"])
+        shield = IntentShield()
         shield.initialize()
         
         # Audit an action before executing it
-        ok, reason = shield.audit("BROWSE", "https://example.com")
-        
-        # Parse LLM output
-        result = shield.parse("SUBCONSCIOUS: thinking...\\nACTION: SEARCH(bitcoin)")
+        ok, reason = shield.audit("DEPLOY", "production-server-01")
     """
 
-    def __init__(self, data_dir="data", valid_tools=None, restricted_domains=None,
+    def __init__(self, data_dir="data", restricted_domains=None,
                  protected_files=None, exempt_actions=None,
                  enable_hitl=False, hitl_actions=None, hitl_ttl=300,
                  enable_siem=False, siem_path=None, siem_format="json"):
         """
         Args:
             data_dir: Directory for lock files and usage tracking
-            valid_tools: Whitelist of allowed tool/action names
             restricted_domains: URL domains to block
             protected_files: File paths that cannot be read/written
             exempt_actions: Actions exempt from harm word checking
@@ -57,7 +51,6 @@ class IntentShield:
             siem_format: SIEM format — "json" or "cef"
         """
         self.data_dir = data_dir
-        self.parser = ActionParser(valid_tools=valid_tools)
 
         CoreSafety.configure(
             data_dir=data_dir,
@@ -180,41 +173,3 @@ class IntentShield:
         if not self.hitl:
             return False, "HITL not enabled."
         return self.hitl.execute_approved(approval_id, action_type, payload)
-
-    def parse(self, llm_response):
-        """
-        Parse LLM output into structured action.
-        
-        Args:
-            llm_response: Raw text from the LLM
-            
-        Returns:
-            dict with 'thoughts', 'action', 'payload', 'success', 'feedback'
-        """
-        return self.parser.parse(llm_response)
-
-    def audit_parsed(self, llm_response, invoker_role="Unknown"):
-        """
-        Parse + Audit in one call.
-        
-        Returns:
-            dict with parse results + 'authorized' and 'audit_reason' keys
-        """
-        result = self.parse(llm_response)
-        if not result["success"]:
-            result["authorized"] = False
-            result["audit_reason"] = "Parse failed"
-            return result
-
-        ok, reason = self.audit(result["action"], result["payload"], invoker_role)
-        result["authorized"] = ok
-        result["audit_reason"] = reason
-        return result
-
-    def set_dynamic_filter(self, user_prompt):
-        """Set dynamic echo filter from user prompt."""
-        CoreSafety.set_dynamic_filter(user_prompt)
-
-    def clear_dynamic_filter(self):
-        """Clear dynamic echo filter."""
-        CoreSafety.clear_dynamic_filter()
