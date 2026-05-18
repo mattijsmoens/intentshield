@@ -162,6 +162,7 @@ class CoreSafety(metaclass=FrozenNamespace):
         Args:
             max_per_day: Maximum allowed actions per day (default 500)
         """
+        import tempfile
         data_dir = cls._STATE.get("data_dir", "data")
         reset_file = os.path.join(data_dir, "daily_usage.txt")
 
@@ -185,8 +186,16 @@ class CoreSafety(metaclass=FrozenNamespace):
 
                 usage += 1
                 os.makedirs(data_dir, exist_ok=True)
-                with open(reset_file, "w", encoding="utf-8") as f:
-                    f.write(f"{current_date}|{usage}")
+                
+                # Atomic write to prevent file corruption during OS/Disk failures
+                fd, temp_path = tempfile.mkstemp(dir=data_dir, text=True)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(f"{current_date}|{usage}")
+                    os.replace(temp_path, reset_file)
+                except Exception as e:
+                    os.unlink(temp_path)
+                    raise e
 
                 return True, f"Budget OK ({usage}/{max_per_day})"
             except Exception as e:
